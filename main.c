@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/file.h>
+#include <unistd.h>
 
 
 #define C_RED     "\x1b[31m"
@@ -96,6 +97,8 @@ int main(int argc, const char * argv[]) {
         if (flock(lockfile_fd, lock_mode) != 0) {
             return 0;
         }
+        fprintf(lockfile, "%d", getpid());
+        fflush(lockfile);
     }
 
     system(command);
