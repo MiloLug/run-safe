@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <sys/file.h>
 #include <unistd.h>
-
+#include <signal.h>
 
 #define C_RED     "\x1b[31m"
 #define C_GREEN   "\x1b[32m"
@@ -16,15 +16,23 @@
 
 #define C_ERR(x) C_RED x C_RESET
 
+static volatile FILE *lockfile = NULL;
 
-void print_help(void) {
-    printf(
-        C_BLUE "Usage:" C_RESET " run-safe [flags] -c <shell command>\n\n"
-        C_GREEN "Flags:\n" C_RESET
-        "    --help        - display help\n"
-        "    -l <path>     - lockfile path\n"
-        "    -Lw           - 'lockfile wait' - wait for the other instances to stop and then run\n\n"
-    );
+
+static void
+on_close(void)
+{
+    if (lockfile != NULL) {
+        pclose((FILE *)lockfile);
+        lockfile = NULL;
+    }
+}
+
+static void
+sig_handler(int sig)
+{
+    on_close();
+    exit(0);
 }
 
 
@@ -38,10 +46,24 @@ void throw_argument_error(const char * sample) {
 }
 
 
+void print_help(void) {
+    printf(
+        C_BLUE "Usage:" C_RESET " run-safe [flags] -c <shell command>\n\n"
+        C_GREEN "Flags:\n" C_RESET
+        "    --help        - display help\n"
+        "    -l <path>     - lockfile path\n"
+        "    -Lw           - 'lockfile wait' - wait for the other instances to stop and then run\n\n"
+    );
+}
+
+
 int main(int argc, const char * argv[]) {
+    signal(SIGINT, sig_handler);
+    signal(SIGTERM, sig_handler);
+    signal(SIGKILL, sig_handler);
+
     int exit_status = 0;
 
-    FILE * lockfile;
     int lockfile_fd;
     const char * lockfile_path = NULL;
     unsigned int lock_mode = LOCK_EX | LOCK_NB;
@@ -93,12 +115,12 @@ int main(int argc, const char * argv[]) {
             fprintf(stderr, C_ERR("error: can't open the lockfile '%s'\n"), lockfile_path);
             return 1;
         }
-        lockfile_fd = fileno(lockfile);
+        lockfile_fd = fileno((FILE *)lockfile);
         if (flock(lockfile_fd, lock_mode) != 0) {
             return 0;
         }
-        fprintf(lockfile, "%d", getpid());
-        fflush(lockfile);
+        fprintf((FILE *)lockfile, "%d", getpid());
+        fflush((FILE *)lockfile);
     }
 
     system(command);
@@ -108,8 +130,8 @@ int main(int argc, const char * argv[]) {
             fprintf(stderr, C_ERR("error: can't unlock the lockfile '%s'\n"), lockfile_path);
             exit_status = 1;
         }
-        fclose(lockfile);
     }
 
+    on_close();
     return exit_status;
 }
