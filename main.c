@@ -17,12 +17,16 @@
 #define C_ERR(x) C_RED x C_RESET
 
 static volatile FILE *lockfile = NULL;
-
+static volatile int lockfile_fd = -1;
 
 static void
 on_close(void)
 {
     if (lockfile != NULL) {
+        if (lockfile_fd != -1) {
+            flock((int)lockfile_fd, LOCK_UN);
+            lockfile_fd = -1;
+        }
         pclose((FILE *)lockfile);
         lockfile = NULL;
     }
@@ -32,6 +36,7 @@ static void
 sig_handler(int sig)
 {
     on_close();
+    kill(0, 15);
     exit(0);
 }
 
@@ -64,7 +69,6 @@ int main(int argc, const char * argv[]) {
 
     int exit_status = 0;
 
-    int lockfile_fd;
     const char * lockfile_path = NULL;
     unsigned int lock_mode = LOCK_EX | LOCK_NB;
 
@@ -110,15 +114,18 @@ int main(int argc, const char * argv[]) {
     }
 
     if (lockfile_path != NULL) {
-        lockfile = fopen(lockfile_path, "w");
+        if((lockfile = fopen(lockfile_path, "a")) != NULL) {
+            lockfile = freopen(NULL, "r+", (FILE *)lockfile);
+        }
         if (lockfile == NULL) {
             fprintf(stderr, C_ERR("error: can't open the lockfile '%s'\n"), lockfile_path);
             return 1;
         }
         lockfile_fd = fileno((FILE *)lockfile);
-        if (flock(lockfile_fd, lock_mode) != 0) {
-            return 0;
+        if (flock((int)lockfile_fd, lock_mode) != 0) {
+            return 1;
         }
+        ftruncate(lockfile_fd, 0);
         fprintf((FILE *)lockfile, "%d", getpid());
         fflush((FILE *)lockfile);
     }
@@ -126,7 +133,7 @@ int main(int argc, const char * argv[]) {
     system(command);
 
     if (lockfile_path != NULL) {
-        if (flock(lockfile_fd, LOCK_UN) != 0) {
+        if (flock((int)lockfile_fd, LOCK_UN) != 0) {
             fprintf(stderr, C_ERR("error: can't unlock the lockfile '%s'\n"), lockfile_path);
             exit_status = 1;
         }
